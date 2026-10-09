@@ -198,8 +198,10 @@ def pending_snapshot() -> list[dict]:
 
 
 def approve(action_id: str) -> dict:
-    """Called ONLY from the UI's Approve button — never callable by the model."""
-    action = PENDING.pop(action_id, None)
+    """Called ONLY from the UI's Approve button — never callable by the model.
+    The proposal stays pending until the write actually succeeds, so a failed
+    approval can be retried instead of silently vanishing."""
+    action = PENDING.get(action_id)
     if not action:
         return {"error": "unknown or already-resolved action"}
     if action["type"] == "label":
@@ -209,10 +211,22 @@ def approve(action_id: str) -> dict:
     try:
         r = requests.post(f"{GITHUB_API}{path}", headers=_headers(), json=body, timeout=10)
     except requests.RequestException as exc:
-        return {"error": f"network error: {type(exc).__name__}"}
+        return {"error": f"network error: {type(exc).__name__} — proposal kept, retry Approve"}
     if not r.ok:
-        return {"error": f"GitHub HTTP {r.status_code}"}
-    return {"applied": True, "url": r.json().get("html_url")}
+        return {"error": f"GitHub HTTP {r.status_code} — proposal kept, retry Approve"}
+    PENDING.pop(action_id, None)  # only drop the proposal after GitHub accepted it
+    try:
+        data = r.json()
+    except ValueError:
+        data = None
+    # Label endpoint returns a LIST of label objects; comment endpoint an object.
+    if isinstance(data, dict):
+        url = data.get("html_url")
+    elif isinstance(data, list) and data and isinstance(data[0], dict):
+        url = data[0].get("html_url")
+    else:
+        url = None
+    return {"applied": True, "url": url}
 
 
 def deny(action_id: str) -> dict:

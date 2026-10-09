@@ -24,7 +24,8 @@ def index():
 
 @app.get("/api/health")
 def health():
-    return jsonify({"ok": True, "model": llm.MODEL, "backend": llm.BASE_URL})
+    return jsonify({"ok": True, "model": llm.MODEL, "backend": llm.BASE_URL,
+                    "repo": os.environ.get("DEMO_REPO", "")})
 
 
 @app.get("/api/issues")
@@ -52,6 +53,21 @@ def triage():
     result["pending_actions"] = tools.pending_snapshot()
     return jsonify(result)  # needs_human results are still HTTP 200 — they are
     # a designed outcome (see README "Failure handling"), not a server error.
+
+
+@app.post("/api/propose")
+def propose():
+    """Human clicks 'Apply labels' on the verdict card -> creates a proposal.
+    Nothing touches GitHub until /api/approve is called."""
+    payload = request.get_json(silent=True) or {}
+    try:
+        number, label = int(payload.get("issue", 0)), str(payload.get("label", ""))
+    except (TypeError, ValueError):
+        return jsonify({"error": "body must be {\"issue\": n, \"label\": \"...\"}"}), 400
+    result = tools.propose_label(number, label)
+    status = 400 if "error" in result else 200
+    result["pending_actions"] = tools.pending_snapshot()
+    return jsonify(result), status
 
 
 @app.post("/api/approve")

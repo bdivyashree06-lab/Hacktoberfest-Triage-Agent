@@ -72,7 +72,8 @@ function banner(msg) {
 async function health() {
   try {
     const h = await api('/api/health');
-    $('health').textContent = 'model: ' + h.model + ' @ ' + h.backend;
+    window.DEMO_REPO = h.repo || '';
+    $('health').textContent = 'model: ' + h.model + ' @ ' + h.backend + (h.repo ? ' @ ' + h.repo : '');
   } catch (e) { $('health').textContent = 'backend unreachable'; }
 }
 
@@ -133,12 +134,14 @@ function renderResult(res) {
       <div>${v.labels.map(l => `<span class="badge">${esc(l)}</span>`).join('')}
            <span class="badge sev-${esc(v.severity)}">severity: ${esc(v.severity)}</span></div>
       <p class="verdict-summary">${esc(v.summary)}</p>
-      ${v.duplicate_of != null ? `<p>&#128279; Possible duplicate of #<a href="https://github.com/${encodeURIComponent(window.DEMO_REPO || '')}/issues/${v.duplicate_of}" onclick="return false;">${v.duplicate_of}</a></p>` : ''}
+      ${v.duplicate_of != null ? `<p>&#128279; Possible duplicate of #<a href="https://github.com/${encodeURIComponent(window.DEMO_REPO || '')}/issues/${v.duplicate_of}" >${v.duplicate_of}</a></p>` : ''}
       <h3>Next steps</h3>
       <ul>${v.next_steps.map(s => `<li>${esc(s)}</li>`).join('')}</ul>
       <div class="conf"><i style="width:${pct}%"></i></div>
       <div class="muted">confidence ${pct}%</div>
+      ${v.labels.length ? '<button class="small primary" style="margin-top:8px" onclick="applyLabels()">Apply labels via approval gate &rarr;</button>' : ''}
     </div>`;
+  window.LAST_VERDICT = res;
 }
 
 function renderPending(list) {
@@ -152,6 +155,22 @@ function renderPending(list) {
           <button class="small primary" onclick="decide('${esc(p.id)}','approve')">Approve</button>
         </div>`).join('')}
     </div>`;
+}
+
+async function applyLabels() {
+  const res = window.LAST_VERDICT;
+  if (!res || !res.verdict) return;
+  for (const label of res.verdict.labels) {
+    try {
+      await api('/api/propose', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({issue: res.issue, label: label})
+      });
+    } catch (e) { banner('Could not propose ' + label + ': ' + e.message); }
+  }
+  await refreshPending();
+  banner('Proposal(s) created — review and Approve below. Nothing sent to GitHub yet.');
 }
 
 async function decide(actionId, decision) {
