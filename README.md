@@ -93,13 +93,17 @@ Plus: **the model can never write to GitHub.** It can only *propose* a label/com
 
 ## Hack Day build log
 
-*(Fill this in during the event — it documents that the solution was built in the allotted time.)*
+Built by 
+1.Divyashree.B
+2.Vinay.R
+3.Nithin.M
+4.Rakshitha.K.C
 
-| Time | Who | What changed |
+On 9/10/26
 |---|---|---|
 |  |  |  |
 
-### Implemented vs. TODO(hack-day)
+### Implemented
 
 Scaffolding done: architecture, agent loop, tool registry, all 8 failure paths,
 approval-gated writes, UI, README.
