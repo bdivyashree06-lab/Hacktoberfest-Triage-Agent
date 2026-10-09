@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Hacktoberfest Triage Agent</title>
+<style>
+:root{--bg:#0d1117;--panel:#161b22;--border:#30363d;--text:#e6edf3;--muted:#8b949e;--accent:#ff7b72;--ok:#3fb950;--warn:#d29922;--blue:#58a6ff}
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--bg);color:var(--text)}
+header{display:flex;justify-content:space-between;align-items:center;padding:14px 22px;border-bottom:1px solid var(--border);flex-wrap:wrap;gap:8px}
+h1{font-size:17px;margin:0}h1 span{color:var(--accent)}
+#health{font-size:12px;color:var(--muted)}
+main{max-width:960px;margin:0 auto;padding:22px}
+.row{display:flex;gap:10px;margin-bottom:18px}
+input,button{font:inherit;background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:9px 12px}
+input{flex:1}
+button{cursor:pointer}button:hover{border-color:var(--accent)}
+button:disabled{opacity:.5;cursor:wait}
+button.primary{background:var(--accent);color:#0d1117;border-color:var(--accent);font-weight:700}
+button.small{padding:5px 10px;font-size:13px}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-bottom:12px}
+.card h3{margin:0 0 8px;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.step-n{color:var(--accent);font-weight:700}
+.toolname{color:var(--blue)}
+.thought{color:var(--muted);font-style:italic;font-size:13px}
+.obs{white-space:pre-wrap;word-break:break-word;font-size:13px;color:#79c0ff;margin-top:6px;max-height:160px;overflow:auto}
+.badge{display:inline-block;padding:1px 9px;border-radius:20px;font-size:12px;border:1px solid var(--border);margin:0 6px 6px 0}
+.sev-high{color:#ff7b72;border-color:#ff7b72}.sev-medium{color:#d29922;border-color:#d29922}.sev-low{color:#3fb950;border-color:#3fb950}
+#banner{display:none;background:#3d1d1d;border:1px solid var(--accent);color:#ffb3ab;padding:10px 14px;border-radius:6px;margin-bottom:14px}
+.warn-card{border-color:var(--warn)}
+.ok-card{border-color:var(--ok)}
+.muted{color:var(--muted);font-size:13px}
+ul{margin:6px 0 0;padding-left:20px}
+a{color:var(--blue)}
+.conf{height:6px;background:#21262d;border-radius:4px;margin-top:8px;overflow:hidden}
+.conf i{display:block;height:100%;background:var(--ok)}
+</style>
+</head>
+<body>
+<header>
+  <h1>&#127991;&#65039; Hacktoberfest <span>Triage Agent</span></h1>
+  <div id="health">checking backend&hellip;</div>
+</header>
+<main>
+  <div id="banner"></div>
+  <div class="row">
+    <input id="issue" type="number" min="1" placeholder="Issue number (try the seeded ones: 1, 2, 3&hellip;)">
+    <button class="primary" id="run" onclick="runTriage()">Triage issue &rarr;</button>
+  </div>
+  <div id="steps"></div>
+  <div id="result"></div>
+  <div id="pending"></div>
+  <p class="muted">Read-only tools run automatically. Labels/comments are <b>proposals</b> &mdash;
+  nothing is written to GitHub until a human approves it below.</p>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  if (!r.ok) throw new Error(path + ' -> HTTP ' + r.status);
+  return r.json();
+}
+
+function banner(msg) {
+  const b = $('banner');
+  if (!msg) { b.style.display = 'none'; return; }
+  b.textContent = msg; b.style.display = 'block';
+}
+
+async function health() {
+  try {
+    const h = await api('/api/health');
+    $('health').textContent = 'model: ' + h.model + ' @ ' + h.backend;
+  } catch (e) { $('health').textContent = 'backend unreachable'; }
+}
+
+async function runTriage() {
+  banner(null);
+  const issue = parseInt($('issue').value, 10);
+  if (!issue) return banner('Enter an issue number first.');
+  $('run').disabled = true;
+  $('steps').innerHTML = ''; $('result').innerHTML = '';
+  try {
+    const res = await api('/api/triage', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({issue: issue})
+    });
+    renderSteps(res.log || []);
+    renderResult(res);
+    if (res.pending_actions && res.pending_actions.length) renderPending(res.pending_actions);
+  } catch (e) {
+    banner('Request failed: ' + e.message + ' — is the server running?');
+  } finally {
+    $('run').disabled = false;
+  }
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function renderSteps(log) {
+  if (!log.length) { $('steps').innerHTML = '<div class="card muted">No tool steps — the model answered directly (check this is intended).</div>'; return; }
+  $('steps').innerHTML = log.map(s => `
+    <div class="card">
+      <h3><span class="step-n">step ${s.step}</span> &middot;
+          <span class="toolname">${esc(s.tool)}</span>
+          <span class="muted">${esc(JSON.stringify(s.args || {}))}</span></h3>
+      <div class="thought">${esc(s.thought)}</div>
+      <div class="obs">${esc(s.observation)}</div>
+    </div>`).join('');
+}
+
+function renderResult(res) {
+  if (res.needs_human) {
+    $('result').innerHTML = `
+      <div class="card warn-card">
+        <h3>&#9888;&#65039; Needs human review</h3>
+        <div>${esc(res.reason)}</div>
+        ${res.rejected_verdict ? '<div class="obs">' + esc(res.rejected_verdict) + '</div>' : ''}
+        <div class="muted" style="margin-top:6px">The agent degraded instead of guessing — by design.</div>
+      </div>`;
+    return;
+  }
+  const v = res.verdict;
+  const pct = Math.round(v.confidence * 100);
+  $('result').innerHTML = `
+    <div class="card ok-card">
+      <h3>&#9989; Verdict for issue #${res.issue}</h3>
+      <div>${v.labels.map(l => `<span class="badge">${esc(l)}</span>`).join('')}
+           <span class="badge sev-${esc(v.severity)}">severity: ${esc(v.severity)}</span></div>
+      <p class="verdict-summary">${esc(v.summary)}</p>
+      ${v.duplicate_of != null ? `<p>&#128279; Possible duplicate of #<a href="https://github.com/${encodeURIComponent(window.DEMO_REPO || '')}/issues/${v.duplicate_of}" onclick="return false;">${v.duplicate_of}</a></p>` : ''}
+      <h3>Next steps</h3>
+      <ul>${v.next_steps.map(s => `<li>${esc(s)}</li>`).join('')}</ul>
+      <div class="conf"><i style="width:${pct}%"></i></div>
+      <div class="muted">confidence ${pct}%</div>
+    </div>`;
+}
+
+function renderPending(list) {
+  $('pending').innerHTML = `
+    <div class="card">
+      <h3>&#128274; Awaiting your approval</h3>
+      ${list.map(p => `
+        <div style="display:flex;gap:8px;align-items:center;margin:6px 0">
+          <span style="flex:1">${esc(p.description)}</span>
+          <button class="small" onclick="decide('${esc(p.id)}','deny')">Deny</button>
+          <button class="small primary" onclick="decide('${esc(p.id)}','approve')">Approve</button>
+        </div>`).join('')}
+    </div>`;
+}
+
+async function decide(actionId, decision) {
+  try {
+    const r = await api('/api/approve', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({action_id: actionId, decision: decision})
+    });
+    if (r.error) banner('GitHub said: ' + r.error);
+    else if (r.applied) banner(null);
+    refreshPending();
+  } catch (e) { banner('Approval failed: ' + e.message); }
+}
+
+async function refreshPending() {
+  try {
+    const p = await api('/api/pending');
+    if (p.pending && p.pending.length) renderPending(p.pending);
+    else $('pending').innerHTML = '';
+  } catch (e) { /* server down; banner already set elsewhere */ }
+}
+
+health();
+refreshPending();
+$('issue').addEventListener('keydown', e => { if (e.key === 'Enter') runTriage(); });
+</script>
+</body>
+</html>
