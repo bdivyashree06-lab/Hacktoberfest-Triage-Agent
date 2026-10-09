@@ -103,10 +103,13 @@ def get_issue(number: int) -> dict:
     }
 
 
-def list_issues(limit: int = 15) -> dict:
-    """List recent issues (PRs excluded) — used for duplicate detection."""
+def list_issues(limit: int = 15, state: str = "all") -> dict:
+    """List recent issues (PRs excluded) — used for duplicate detection.
+    state: "open", "closed", or "all"."""
     limit = min(int(limit or 15), 50)
-    data, err = _github_get(f"/repos/{DEMO_REPO}/issues?state=all&per_page={limit}")
+    if state not in ("open", "closed", "all"):
+        return {"error": f"state must be open|closed|all, got {state!r}"}
+    data, err = _github_get(f"/repos/{DEMO_REPO}/issues?state={state}&per_page={limit}")
     if err:
         return {"error": err}
     return {

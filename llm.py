@@ -26,7 +26,7 @@ import openai
 
 BASE_URL = os.environ.get("LLM_BASE_URL", "http://localhost:11434/v1")
 MODEL = os.environ.get("LLM_MODEL", "qwen2.5:7b-instruct")
-TIMEOUT = float(os.environ.get("LLM_TIMEOUT", "90"))
+TIMEOUT = float(os.environ.get("LLM_TIMEOUT", "240"))
 # Low temperature: triage should be reproducible — nondeterministic demos lose judges.
 TEMPERATURE = float(os.environ.get("LLM_TEMPERATURE", "0.2"))
 

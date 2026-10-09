@@ -33,7 +33,8 @@ Final verdict — only once you have enough evidence:
   "confidence": 0.0          // 0.0 - 1.0
 }}}}
 
-Available tools: __TOOLS__
+Available tools (exact signatures — use only these parameters):
+__TOOLS__
 
 Rules:
 - You have at most __MAX_STEPS__ steps. Use list_issues before claiming a duplicate;
@@ -46,12 +47,15 @@ Rules:
 
 
 def _system_prompt() -> str:
+    import inspect  # deferred: keeps module import side-effect free
+    lines = []
+    for name, fn in sorted(__import__("tools").TOOLS.items()):
+        doc = (inspect.getdoc(fn) or "").split("\n")[0]
+        lines.append(f"- {name}{inspect.signature(fn, eval_str=True)} — {doc}")
     return (
         SYSTEM_PROMPT
         .replace("__LABELS__", ", ".join(ALLOWED_LABELS))
-        .replace("__TOOLS__", ", ".join(sorted(
-            k for k in __import__("tools").TOOLS  # dynamic: prompt never drifts from the registry
-        )))
+        .replace("__TOOLS__", "\n".join(lines))  # dynamic: prompt never drifts from registry
         .replace("__MAX_STEPS__", str(MAX_STEPS))
     )
 
@@ -118,6 +122,7 @@ def run(issue_number: int) -> dict:
     if "error" in issue:
         return _needs_human(f"could not load issue #{issue_number}: {issue['error']}", log)
 
+    last_error_key = None
     messages = [
         {"role": "system", "content": _system_prompt()},
         {"role": "user", "content": "Triage this issue:\n" + json.dumps(issue, indent=2)[:4000]},
@@ -132,9 +137,34 @@ def run(issue_number: int) -> dict:
             return _needs_human("LLM backend unreachable: " + resp["__transport_error__"], log)
 
         tool_name = resp.get("tool")
+        if not tool_name and "verdict" not in resp:
+            # Protocol violation: response has neither "tool" nor "verdict"
+            # (weak models sometimes return only {"thought": ...}).
+            # Feed the error back and let the model correct itself
+            # — recovery within the step budget beats an instant needs_human.
+            observation = ("ERROR: response contained neither 'tool' nor 'verdict'. "
+                           "Asked the model to correct its output.")
+            log.append({"step": step, "thought": str(resp.get("thought", ""))[:400],
+                        "tool": "(protocol-violation)", "args": {}, "observation": observation})
+            messages += [
+                {"role": "assistant", "content": json.dumps(resp)},
+                {"role": "user", "content": (
+                    "Invalid response: output either an action "
+                    "{\"thought\": ..., \"tool\": \"name\", \"args\": {...}} "
+                    "or a final verdict "
+                    "{\"thought\": ..., \"tool\": null, \"verdict\": {...}}."
+                )},
+            ]
+            continue
         if tool_name:
             args = resp.get("args") or {}
+            call_key = (str(tool_name), json.dumps(args, sort_keys=True, default=str))
             obs = execute_tool(str(tool_name), args)
+            # Anti-loop: an identical call that already failed will fail again.
+            if call_key == last_error_key and str(obs).startswith("ERROR"):
+                obs = (str(obs) + " [REPEATED IDENTICAL CALL — it failed before too. "
+                       "Change approach, or output a final verdict now.]")
+            last_error_key = call_key if str(obs).startswith("ERROR") else None
             log.append({
                 "step": step,
                 "thought": str(resp.get("thought", ""))[:400],
